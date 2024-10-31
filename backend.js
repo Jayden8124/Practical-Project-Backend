@@ -5,6 +5,7 @@ const multer = require("multer");
 const path = require("path");
 const cron = require('node-cron');
 
+
 const app = express();
 const port = 5000;
 
@@ -230,13 +231,30 @@ app.get("/history", (req, res) => {
   });
 });
 
-// POST a new history entry
-app.post("/history", (req, res) => {
-  const { action, email, time } = req.body;
+// GET history by email
+app.get("/history/:email", (req, res) => {
+  const { email } = req.params;
 
   pool.query(
-    "INSERT INTO history (action, email, time) VALUES (?, ?, ?)",
-    [action, email, time],
+    "SELECT * FROM history WHERE email = ?",
+    [email],
+    (error, results) => {
+      if (error) {
+        res.status(500).send("Error fetching history by email");
+      } else {
+        res.json(results);
+      }
+    }
+  );
+});
+
+// POST a new history entry
+app.post("/history", (req, res) => {
+  const { action, email, time, income } = req.body;
+
+  pool.query(
+    "INSERT INTO history (action, email, time, income) VALUES (?, ?, ?, ?)",
+    [action, email, time, income],
     (error, results) => {
       if (error) {
         res.status(500).send("Error inserting data into history");
@@ -247,36 +265,6 @@ app.post("/history", (req, res) => {
   );
 });
 
-// PUT to update a history entry
-app.put("/history/:id", (req, res) => {
-  const { id } = req.params;
-  const { action, email, time } = req.body;
-
-  pool.query(
-    "UPDATE history SET action = ?, email = ?, time = ? WHERE id = ?",
-    [action, email, time, id],
-    (error, results) => {
-      if (error) {
-        res.status(500).send("Error updating history entry");
-      } else {
-        res.status(200).send("History entry updated successfully");
-      }
-    }
-  );
-});
-
-// DELETE a history entry
-app.delete("/history/:id", (req, res) => {
-  const { id } = req.params;
-
-  pool.query("DELETE FROM history WHERE id = ?", [id], (error, results) => {
-    if (error) {
-      res.status(500).send("Error deleting history entry");
-    } else {
-      res.status(200).send("History entry deleted successfully");
-    }
-  });
-});
 
 app.listen(port, () => {
   console.log(`App listening on port ${port}`);
