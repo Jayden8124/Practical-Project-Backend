@@ -4,7 +4,7 @@ const mysql = require("mysql2");
 const multer = require("multer");
 const path = require("path");
 const cron = require('node-cron');
-
+const bcrypt = require("bcrypt");
 
 const app = express();
 const port = 5000;
@@ -70,20 +70,6 @@ app.put("/user/image", upload.single('profileImage'), (req, res) => {
   );
 });
 
-
-cron.schedule('0 0 * * *', () => {
-  pool.query(
-    "UPDATE task SET completed = 0, lastResetDate = CURDATE() WHERE completed = 1 AND (lastResetDate IS NULL OR lastResetDate < CURDATE())",
-    (error, results) => {
-      if (error) {
-        console.error("Error resetting tasks: ", error);
-      } else {
-        console.log("Tasks reset successfully at midnight.");
-      }
-    }
-  );
-});
-
 // GET all users
 app.get("/user", (req, res) => {
   pool.query("SELECT * FROM users", (error, results) => {
@@ -114,33 +100,95 @@ app.get("/user/:email", (req, res) => {
   );
 });
 
-// POST a new user
-app.post("/user", (req, res) => {
+// Sign up endpoint
+app.post("/user", async (req, res) => {
   const startDate = new Date().toISOString().split("T")[0];
-  const { firstName, lastName, phone, birth, email, password, rate, total = 0} = req.body;
-  pool.query(
-    "INSERT INTO users (firstName, lastName, phone, birth, startDate, password, email, rate, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [
-      firstName,
-      lastName,
-      phone,
-      birth,
-      startDate,
-      password,
-      email,
-      rate,
-      total
-    ],
-    (error, results) => {
-      if (error) {
-        
-        res.status(500).send("Error inserting user");
+  const { firstName, lastName, phone, birth, email, password, rate, total = 0 } = req.body;
+
+  try {
+    // Hash the password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Insert the user with hashed password
+    pool.query(
+      "INSERT INTO users (firstName, lastName, phone, birth, startDate, password, email, rate, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [firstName, lastName, phone, birth, startDate, hashedPassword, email, rate, total],
+      (error, results) => {
+        if (error) {
+          res.status(500).send("Error inserting user");
+        } else {
+          res.status(201).send("User inserted successfully");
+        }
+      }
+    );
+  } catch (error) {
+    res.status(500).send("Error processing sign-up");
+  }
+});
+
+// Sign in endpoint
+app.post("/user/login", (req, res) => {
+  const { email, password } = req.body;
+
+  pool.query("SELECT * FROM users WHERE email = ?", [email], async (error, results) => {
+    if (error) {
+      res.status(500).send("Error fetching user");
+    } else if (results.length === 0) {
+      res.status(404).send("User not found");
+    } else {
+      const user = results[0];
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (isMatch) {
+        res.json({ message: "Login successful", email: user.email });
       } else {
-        res.status(201).send("User inserted successfully");
+        res.status(400).send("Invalid email or password");
       }
     }
-  );
+  });
 });
+
+// Endpoint to change password
+app.put("/user/password", async (req, res) => {
+  const { email, oldPassword, newPassword } = req.body;
+
+  try {
+    // Fetch user by email
+    pool.query("SELECT * FROM users WHERE email = ?", [email], async (error, results) => {
+      if (error) {
+        return res.status(500).send("Error fetching user by email");
+      } else if (results.length === 0) {
+        return res.status(404).send("User not found");
+      }
+
+      const user = results[0];
+
+      // Compare old password with hashed password in database
+      const isMatch = await bcrypt.compare(oldPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).send("Old password is incorrect");
+      }
+
+      // Hash new password
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+      // Update user's password in database
+      pool.query(
+        "UPDATE users SET password = ? WHERE email = ?",
+        [hashedNewPassword, email],
+        (error, results) => {
+          if (error) {
+            res.status(500).send("Error updating password");
+          } else {
+            res.status(200).send("Password updated successfully");
+          }
+        }
+      );
+    });
+  } catch (error) {
+    res.status(500).send("Error processing password change");
+  }
+});
+
 
 // PUT to update a user's total income
 app.put("/user/:email", (req, res) => {
@@ -219,7 +267,6 @@ app.delete("/tasks/:task_id", (req, res) => {
   });
 });
 
-
 // GET all history
 app.get("/history", (req, res) => {
   pool.query("SELECT * FROM history", (error, results) => {
@@ -264,7 +311,6 @@ app.post("/history", (req, res) => {
     }
   );
 });
-
 
 app.listen(port, () => {
   console.log(`App listening on port ${port}`);
