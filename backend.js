@@ -40,7 +40,7 @@ const pool = mysql.createPool({
 // Cron job to reset completed tasks at midnight
 cron.schedule('0 0 * * *', () => {
   pool.query(
-    "UPDATE task SET completed = 0, lastResetDate = CURDATE() WHERE completed = 1 AND (lastResetDate IS NULL OR lastResetDate < CURDATE())",
+    "UPDATE task SET completed = 0, updated_at = CURRENT_TIMESTAMP() WHERE completed = 1",
     (error, results) => {
       if (error) {
         console.error("Error resetting tasks: ", error);
