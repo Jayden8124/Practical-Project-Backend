@@ -9,17 +9,17 @@ const bcrypt = require("bcrypt");
 const app = express();
 const port = 5000;
 
+// Middleware setup
 app.use(cors({
   origin: '*',
   methods: 'GET,POST,PUT,DELETE',
 }));
-
 app.use(express.json());
 
 // Set up static folder to serve uploaded images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Set up storage for uploaded files using multer
+// Set up storage for uploaded files
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/');
@@ -28,14 +28,13 @@ const storage = multer.diskStorage({
     cb(null, `${Date.now()}-${file.originalname}`);
   },
 });
-
 const upload = multer({ storage });
 
 const pool = mysql.createPool({
   host: "localhost",
-  user: "root", // Your MySQL username
-  password: "", // Your MySQL password
-  database: "db_669", // Your database name
+  user: "root",
+  password: "",
+  database: "db_669",
 });
 
 // Cron job to reset completed tasks at midnight
@@ -52,11 +51,105 @@ cron.schedule('0 0 * * *', () => {
   );
 });
 
-// Endpoint to handle image upload
+
+// User endpoints
+
+// Sign up endpoint
+app.post("/user", async (req, res) => {
+  const startDate = new Date().toISOString().split("T")[0];
+  const { firstName, lastName, phone, birth, email, password, rate, total = 0 } = req.body;
+
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
+    pool.query(
+      "INSERT INTO users (firstName, lastName, phone, birth, startDate, password, email, rate, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [firstName, lastName, phone, birth, startDate, hashedPassword, email, rate, total],
+      (error, results) => {
+        if (error) {
+          res.status(500).send("Error inserting user");
+        } else {
+          res.status(201).send("User inserted successfully");
+        }
+      }
+    );
+  } catch (error) {
+    res.status(500).send("Error processing sign-up");
+  }
+});
+
+// Sign in endpoint
+app.post("/user/login", (req, res) => {
+  const { email, password } = req.body;
+  pool.query("SELECT * FROM users WHERE email = ?", [email], async (error, results) => {
+    if (error) {
+      res.status(500).send("Error fetching user");
+    } else if (results.length === 0) {
+      res.status(404).send("User not found");
+    } else {
+      const user = results[0];
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (isMatch) {
+        res.json({ message: "Login successful", email: user.email });
+      } else {
+        res.status(400).send("Invalid email or password");
+      }
+    }
+  });
+});
+
+// Change password endpoint
+app.put("/user/password", async (req, res) => {
+  const { email, oldPassword, newPassword } = req.body;
+  try {
+    pool.query("SELECT * FROM users WHERE email = ?", [email], async (error, results) => {
+      if (error) {
+        return res.status(500).send("Error fetching user by email");
+      } else if (results.length === 0) {
+        return res.status(404).send("User not found");
+      }
+      const user = results[0];
+      const isMatch = await bcrypt.compare(oldPassword, user.password);
+      if (!isMatch) {
+        return res.status(400).send("Old password is incorrect");
+      }
+      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+      pool.query(
+        "UPDATE users SET password = ? WHERE email = ?",
+        [hashedNewPassword, email],
+        (error, results) => {
+          if (error) {
+            res.status(500).send("Error updating password");
+          } else {
+            res.status(200).send("Password updated successfully");
+          }
+        }
+      );
+    });
+  } catch (error) {
+    res.status(500).send("Error processing password change");
+  }
+});
+
+// Update user's total income endpoint
+app.put("/user/:email", (req, res) => {
+  const { total, email } = req.body;
+  pool.query(
+    "UPDATE users SET total = ? WHERE email = ?",
+    [total, email],
+    (error, results) => {
+      if (error) {
+        res.status(500).send("Error updating user total income");
+      } else {
+        res.status(200).send("User total income updated successfully");
+      }
+    }
+  );
+});
+
+// Image upload endpoint
 app.put("/user/image", upload.single('profileImage'), (req, res) => {
   const { email } = req.query;
   const profileImage = req.file ? `/uploads/${req.file.filename}` : '/uploads/default-profile.png';
-
   pool.query(
     "UPDATE users SET profileImage = ? WHERE email = ?",
     [profileImage, email],
@@ -84,7 +177,6 @@ app.get("/user", (req, res) => {
 // GET user by email
 app.get("/user/:email", (req, res) => {
   const { email } = req.params;
-
   pool.query(
     "SELECT * FROM users WHERE email = ?",
     [email],
@@ -100,112 +192,7 @@ app.get("/user/:email", (req, res) => {
   );
 });
 
-// Sign up endpoint
-app.post("/user", async (req, res) => {
-  const startDate = new Date().toISOString().split("T")[0];
-  const { firstName, lastName, phone, birth, email, password, rate, total = 0 } = req.body;
-
-  try {
-    // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Insert the user with hashed password
-    pool.query(
-      "INSERT INTO users (firstName, lastName, phone, birth, startDate, password, email, rate, total) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [firstName, lastName, phone, birth, startDate, hashedPassword, email, rate, total],
-      (error, results) => {
-        if (error) {
-          res.status(500).send("Error inserting user");
-        } else {
-          res.status(201).send("User inserted successfully");
-        }
-      }
-    );
-  } catch (error) {
-    res.status(500).send("Error processing sign-up");
-  }
-});
-
-// Sign in endpoint
-app.post("/user/login", (req, res) => {
-  const { email, password } = req.body;
-
-  pool.query("SELECT * FROM users WHERE email = ?", [email], async (error, results) => {
-    if (error) {
-      res.status(500).send("Error fetching user");
-    } else if (results.length === 0) {
-      res.status(404).send("User not found");
-    } else {
-      const user = results[0];
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (isMatch) {
-        res.json({ message: "Login successful", email: user.email });
-      } else {
-        res.status(400).send("Invalid email or password");
-      }
-    }
-  });
-});
-
-// Endpoint to change password
-app.put("/user/password", async (req, res) => {
-  const { email, oldPassword, newPassword } = req.body;
-
-  try {
-    // Fetch user by email
-    pool.query("SELECT * FROM users WHERE email = ?", [email], async (error, results) => {
-      if (error) {
-        return res.status(500).send("Error fetching user by email");
-      } else if (results.length === 0) {
-        return res.status(404).send("User not found");
-      }
-
-      const user = results[0];
-
-      // Compare old password with hashed password in database
-      const isMatch = await bcrypt.compare(oldPassword, user.password);
-      if (!isMatch) {
-        return res.status(400).send("Old password is incorrect");
-      }
-
-      // Hash new password
-      const hashedNewPassword = await bcrypt.hash(newPassword, 10);
-
-      // Update user's password in database
-      pool.query(
-        "UPDATE users SET password = ? WHERE email = ?",
-        [hashedNewPassword, email],
-        (error, results) => {
-          if (error) {
-            res.status(500).send("Error updating password");
-          } else {
-            res.status(200).send("Password updated successfully");
-          }
-        }
-      );
-    });
-  } catch (error) {
-    res.status(500).send("Error processing password change");
-  }
-});
-
-
-// PUT to update a user's total income
-app.put("/user/:email", (req, res) => {
-  const { total, email } = req.body;
-
-  pool.query(
-    "UPDATE users SET total = ? WHERE email = ?",
-    [total, email],
-    (error, results) => {
-      if (error) {
-        res.status(500).send("Error updating user total income");
-      } else {
-        res.status(200).send("User total income updated successfully");
-      }
-    }
-  );
-});
+// Task endpoints
 
 // GET all tasks for a user
 app.get("/tasks", (req, res) => {
@@ -254,10 +241,9 @@ app.put("/tasks", (req, res) => {
 // DELETE a task by task_id
 app.delete("/tasks/:task_id", (req, res) => {
   const { task_id } = req.params;
-
   pool.query("DELETE FROM task WHERE task_id = ?", [task_id], (error, results) => {
     if (error) {
-      console.error("Error deleting task:", error); // เพิ่มการแสดงข้อผิดพลาดใน console
+      console.error("Error deleting task:", error);
       res.status(500).send("Error deleting task");
     } else if (results.affectedRows === 0) {
       res.status(404).send("Task not found");
@@ -266,6 +252,8 @@ app.delete("/tasks/:task_id", (req, res) => {
     }
   });
 });
+
+// History endpoints
 
 // GET all history
 app.get("/history", (req, res) => {
@@ -281,7 +269,6 @@ app.get("/history", (req, res) => {
 // GET history by email
 app.get("/history/:email", (req, res) => {
   const { email } = req.params;
-
   pool.query(
     "SELECT * FROM history WHERE email = ?",
     [email],
@@ -298,7 +285,6 @@ app.get("/history/:email", (req, res) => {
 // POST a new history entry
 app.post("/history", (req, res) => {
   const { action, email, time, income } = req.body;
-
   pool.query(
     "INSERT INTO history (action, email, time, income) VALUES (?, ?, ?, ?)",
     [action, email, time, income],
@@ -312,6 +298,7 @@ app.post("/history", (req, res) => {
   );
 });
 
+// Start server
 app.listen(port, () => {
   console.log(`App listening on port ${port}`);
 });
